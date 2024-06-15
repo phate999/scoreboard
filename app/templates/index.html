@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Welcome to the Site</title>
+    <link rel="stylesheet" type="text/css" href="static/styles.css">
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
+    <script>
+    $(document).ready(function(){
+        var selectedAppId;
+        $.ajax({
+            url: '/applications/me',
+            type: 'GET',
+            xhrFields: {
+                withCredentials: true
+            },
+            success: function(data) {
+                var applications = data.application_assignments;
+                for(var i = 0; i < applications.length; i++) {
+                    var app = applications[i];
+                    $('#applications').append('<li class="button-style" data-app-id="' + app.application.id + '" data-app-instructions="' + app.application.instructions + '" data-app-details="' + app.application.description + '">' + app.application.name + '</li>');
+                }
+                // Add click event listener for each application
+                $('#applications li').click(function() {
+                    var appName = $(this).text();
+                    var appDetails = $(this).data('app-details') || 'No details available';
+                    selectedAppId = $(this).data('app-id');
+                    // Populate and show the modal
+                    $('#appName').text(appName);
+                    $('#appDetails').text(appDetails);
+                    $('#appModal').show();
+                });
+            },
+            error: function(error) {
+                console.log(error);
+            }
+        });
+
+        // Close the modal when the user clicks on <span> (x)
+        $('.close').click(function() {
+            $('#appModal').hide();
+        });
+
+        $('#submissionForm').on('submit', function(event) {
+            event.preventDefault(); // Prevent the form from being submitted normally
+
+            let formData = new FormData(event.target); // Gather the form data
+
+            // Separate the file data from the rest of the form data
+            let fileData = new FormData();
+            let jsonData = {};
+            jsonData['application_id'] = selectedAppId;
+            for (let [key, value] of formData.entries()) {
+                if (value instanceof File) {
+                    fileData.append(key, value);
+                    fileData.append('desc', formData.get('desc'));
+                } else {
+                    jsonData[key] = value;
+                }
+            }
+            console.log(formData)
+            // Send the file upload request
+            $.ajax({
+                url: '/upload_attachment',
+                type: 'POST',
+                data: fileData,
+                processData: false, // Don't process the files
+                contentType: false, // Set content type to false as jQuery will tell the server its a query string request
+                xhrFields: {
+                    withCredentials: true
+                },
+                success: function(data, textStatus, jqXHR) {
+                    if (typeof data.error === 'undefined') {
+                        // Success so call function to process the form
+                        jsonData['attachements'] = data.uuids; // Assuming the response contains a 'uuids' property with the file UUIDs
+                        console.log(jsonData)
+                        // Send the JSON request
+                        $.ajax({
+                            url: '/application_submission',
+                            type: 'POST',
+                            data: JSON.stringify(jsonData),
+                            contentType: 'application/json',
+                            success: function(data, textStatus, jqXHR) {
+                                if (typeof data.error === 'undefined') {
+                                    alert('Form submitted successfully');
+                                } else {
+                                    // Handle errors here
+                                    console.log('ERRORS: ' + data.error);
+                                }
+                            },
+                            error: function(jqXHR, textStatus, errorThrown) {
+                                // Handle errors here
+                                console.log('ERRORS: ' + textStatus);
+                            }
+                        });
+                    } else {
+                        // Handle errors here
+                        console.log('ERRORS: ' + data.error);
+                    }
+                },
+                error: function(jqXHR, textStatus, errorThrown) {
+                    // Handle errors here
+                    console.log('ERRORS: ' + textStatus);
+                }
+            });
+        });
+    });
+
+    async function logout(event) {
+        event.preventDefault();
+
+        $.ajax({
+            url: '/auth/jwt/logout',
+            type: 'POST',
+            xhrFields: {
+                withCredentials: true
+            },
+            success: function(data, textStatus, jqXHR) {
+                window.location.href = '/login';
+            },
+            error: function(jqXHR, textStatus, errorThrown) {
+                alert(jqXHR.responseJSON.detail);
+            }
+        });
+    }
+    </script>
+</head>
+<body>
+    <div class="box">
+        <header>
+            <h2>Hello {{ username }}</h2>
+            <a href="#" onclick="logout(event)">Logout</a>
+        </header>
+        <main>
+            <p>You are enrolled in the following challenges. Click to explore</p>
+            <ul class="ulfix" id="applications"></ul>
+        </main>
+    </div>
+    <!-- The Modal -->
+    <div id="appModal" class="modal">
+        <!-- Modal content -->
+        <div class="modal-content">
+            <header>
+                <span class="close">&times;</span>
+                <h2 id="appName"></h2>
+            </header>
+            <main>
+                <p id="appDetails">Some details about the application...</p>
+
+                <div class="modal-box">
+                    <form id="submissionForm">
+                        <label for="submission">Submission:</label>
+                        <textarea id="submission" name="submission" rows="4" cols="50" placeholder="Paste your text here..."></textarea>
+                        <label for="fileAttach">Attachments:</label>
+                        <input type="file" id="fileAttach" name="fileAttach">
+                        <input type="input" name="desc" id="desc" placeholder="Attachment description">
+                        <button type="submit">Submit</button>
+                    </form>
+                </div>
+            </main>
+        </div>
+    </div>
+</body>
+</html>

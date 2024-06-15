@@ -1,0 +1,4 @@
+jinja2 
+fastapi
+fastapi-users[sqlalchemy]
+aiosqlite
