@@ -23,12 +23,72 @@
                 $('#applications li').click(function() {
                     var appName = $(this).text();
                     var appDetails = $(this).data('app-details') || 'No details available';
+                    var submissionDetails = $(this).data('app-instructions') || 'Submission:';
                     selectedAppId = $(this).data('app-id');
+                    window.location.hash = 'app' + selectedAppId;
                     // Populate and show the modal
                     $('#appName').text(appName);
                     $('#appDetails').text(appDetails);
+                    $('#submissionDetails').text(submissionDetails);
                     $('#appModal').show();
+
+                    $.ajax({
+                        url: '/application_submission?application_id=' + selectedAppId,
+                        type: 'GET',
+                        xhrFields: {
+                            withCredentials: true
+                        },
+                        success: function(data) {
+                            var submissions = data.submissions;
+                            $('#appSubmissions').empty();
+                            if (submissions.length > 0) {
+                                $('#appSubmissions').append('<h3>Submissions</h3>');
+
+                                for(var i = 0; i < submissions.length; i++) {
+                                    var submission = submissions[i];
+                                    var timestamp = new Date(submission.created_at + "Z").toLocaleString();
+                                    var description = submission.submission;
+                                    var thumbnails = '';
+                                    for (var j = 0; j < submission.attachments.length; j++) {
+                                        var attachment = submission.attachments[j];
+                                        thumbnails += '<a href="/attachments/data/' + attachment + '"><img src="/attachments/data/' + attachment + '_thumbnail.jpg" alt="Thumbnail"></a>';
+                                    }
+                                    $('#appSubmissions').append('<div class="modal-box">' +
+                                        '<span class="delete-icon" data-submission-id="' + submission.id +'">🗑️</span>'+
+                                        '<p>Time: ' + timestamp + '</p>' +
+                                        '<p>Submission: ' + description + '</p>' +
+                                        thumbnails + 
+                                        '</div>');
+                                }
+                                // Add a click event handler to the delete icons
+                                $(document).on('click', '.delete-icon', function() {
+                                    var submissionId = $(this).data('submission-id');
+
+                                    $.ajax({
+                                        url: '/application_submission/' + submissionId,
+                                        type: 'DELETE',
+                                        xhrFields: {
+                                            withCredentials: true
+                                        },
+                                        success: function(data) {
+                                            // Refresh the submissions
+                                            location.reload();
+                                        }
+                                    });
+                                });
+                            }
+                        }
+                    });
                 });
+
+                // Check if the URL has a hash
+                if (window.location.hash) {
+                    var appId = window.location.hash.substring(4);
+                    var app = $('#applications li[data-app-id="' + appId + '"]');
+                    if (app.length) {
+                        app.click();
+                    }
+                }
             },
             error: function(error) {
                 console.log(error);
@@ -38,6 +98,8 @@
         // Close the modal when the user clicks on <span> (x)
         $('.close').click(function() {
             $('#appModal').hide();
+            window.location.hash = '';
+            $('#appSubmissions').empty(); // TODO should reset the whole modal
         });
 
         $('#submissionForm').on('submit', function(event) {
@@ -51,9 +113,25 @@
             jsonData['application_id'] = selectedAppId;
             for (let [key, value] of formData.entries()) {
                 if (value instanceof File) {
+                    // If no file is selected, skip the validations
+                    if (value.name !== "") {
+                        // Check the file size
+                        if (value.size > 4 * 1024 * 1024) { // 4MB
+                            alert('File is too large (4MB max)');
+                            return;
+                        }
+
+                        // Check the file type
+                        console.log(value.contentType)
+                        if (value.type !== 'image/jpeg' && value.type !== 'image/png') {
+                            alert('Invalid file type. Only JPEG and PNG are allowed.');
+                            return;
+                        }
+                    }
+
                     fileData.append(key, value);
                     fileData.append('desc', formData.get('desc'));
-                } else {
+                } else if (key !== 'desc'){
                     jsonData[key] = value;
                 }
             }
@@ -71,7 +149,8 @@
                 success: function(data, textStatus, jqXHR) {
                     if (typeof data.error === 'undefined') {
                         // Success so call function to process the form
-                        jsonData['attachements'] = data.uuids; // Assuming the response contains a 'uuids' property with the file UUIDs
+                        console.log(data)
+                        jsonData['attachments'] = JSON.stringify(data.uuids); // Assuming the response contains a 'uuids' property with the file UUIDs
                         console.log(jsonData)
                         // Send the JSON request
                         $.ajax({
@@ -79,9 +158,13 @@
                             type: 'POST',
                             data: JSON.stringify(jsonData),
                             contentType: 'application/json',
+                            xhrFields: {
+                                withCredentials: true
+                            },
                             success: function(data, textStatus, jqXHR) {
                                 if (typeof data.error === 'undefined') {
                                     alert('Form submitted successfully');
+                                    location.reload();
                                 } else {
                                     // Handle errors here
                                     console.log('ERRORS: ' + data.error);
@@ -148,14 +231,15 @@
 
                 <div class="modal-box">
                     <form id="submissionForm">
-                        <label for="submission">Submission:</label>
+                        <label id="submissionDetails" for="submission">Submission:</label>
                         <textarea id="submission" name="submission" rows="4" cols="50" placeholder="Paste your text here..."></textarea>
                         <label for="fileAttach">Attachments:</label>
                         <input type="file" id="fileAttach" name="fileAttach">
-                        <input type="input" name="desc" id="desc" placeholder="Attachment description">
+                        <!-- <input type="input" name="desc" id="desc" placeholder="Attachment description"> -->
                         <button type="submit">Submit</button>
                     </form>
                 </div>
+                <div id="appSubmissions"></div>
             </main>
         </div>
     </div>

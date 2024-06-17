@@ -3,8 +3,11 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Depends, HTTPException, UploadFile, File, Form
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, RedirectResponse, Response
 
-from typing import List
+import magic
+
+from typing import List, Optional
 
 from db import (
     User, 
@@ -15,7 +18,6 @@ from db import (
     Submission, 
     SubmissionCreate, 
     Attachment,
-    AttachmentCreate,
     create_db_and_tables, 
     async_session_maker
 )
@@ -24,6 +26,11 @@ from schemas import UserCreate, UserRead, UserUpdate
 import uuid
 import hashlib
 from users import cookie_auth_backend, api_auth_backend, current_active_user, current_active_user_optional, fastapi_users
+
+from PIL import Image
+import io
+
+MAX_UPLOAD_SIZE = 1024 * 1024 * 4 # 4MB
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -182,11 +189,11 @@ async def assign_application(application_assignment: ApplicationAssignmentCreate
 
 @app.post("/application_submission")
 async def application_submission(submission: SubmissionCreate, user: User = Depends(current_active_user)):
-
+    print(submission)
     async with async_session_maker() as session:
         try:
             # create a new Submission instance
-            new_submission = Submission(application_id=submission.application_id, user_id=current_active_user.user_id, submission=submission.submission, attachements=submission.attachements)
+            new_submission = Submission(application_id=submission.application_id, user_id=user.id, submission=submission.submission, attachments=submission.attachments)
 
             # add the new submission to the session
             session.add(new_submission)
@@ -199,31 +206,86 @@ async def application_submission(submission: SubmissionCreate, user: User = Depe
 
             return {"message": "Submission created successfully", "submission_id": new_submission.id}
         except Exception as e:
+            print("error", e)
             await session.rollback()
             raise HTTPException(status_code=400, detail="Could not create submission") from e
         finally:
             await session.close()
 
+@app.get("/application_submission")
+async def get_application_submission(application_id: Optional[int] = None, user: User = Depends(current_active_user)):
+    async with async_session_maker() as session:
+        # Create a query that selects all submissions for the current user
+        query = select(Submission).where(Submission.user_id == user.id)
+
+        # If an application ID was provided, add a filter for it to the query
+        if application_id is not None:
+            query = query.where(Submission.application_id == application_id)
+
+        # Execute the query
+        result = await session.execute(query)
+        submissions = result.scalars().all()
+
+        return {"submissions": submissions}
+
+@app.delete("/application_submission/{submission_id}")
+async def delete_application_submission(submission_id: int, user: User = Depends(current_active_user)):
+    async with async_session_maker() as session:
+        result = await session.execute(select(Submission).where(Submission.id == submission_id))
+        submission = result.scalars().first()
+        if submission is None:
+            raise HTTPException(status_code=404, detail="Submission not found")
+        if submission.user_id != user.id:
+            raise HTTPException(status_code=403, detail="User does not have access to this submission")
+        await session.delete(submission)
+        await session.commit()
+    return {"message": "Submission deleted successfully"}
+
 @app.post("/upload_attachment")
-async def upload_attachment(fileAttach: List[UploadFile] = File(...), desc: str = Form(...), user: User = Depends(current_active_user)):
+async def upload_attachment(fileAttach: List[UploadFile] = Form(...), desc: str = Form(...), user: User = Depends(current_active_user)):
     # form = await request.form()
-    # fetch the attachements from the form
-    # attachements = form["fileAttach"]
+    # fetch the attachments from the form
+    # attachments = form["fileAttach"]
     print("fileattach", fileAttach)
     
     # desc = form.get("desc")
     print("desc", desc) # todo try to pass this in as an argument
     uuids = []
-    for attachement in fileAttach:
-        attachement_file = await attachement.read()
-        file_hash = hashlib.sha256(attachement_file).hexdigest()
+    for attachment in fileAttach:
+        if attachment.filename == "":
+            continue
+        attachment_file = await attachment.read()
+
+        if len(attachment_file) > MAX_UPLOAD_SIZE:
+            raise HTTPException(status_code=400, detail=f"File size too large. Max file size is {MAX_UPLOAD_SIZE} bytes")
+
+        mime_type = magic.from_buffer(attachment_file, mime=True)
+
+        if mime_type not in ["image/jpeg", "image/png"]:
+            raise HTTPException(status_code=400, detail="Only image/jpeg and image/png are allowed")
+
+        file_hash = hashlib.sha256(attachment_file).hexdigest()
         file_uuid = uuid.UUID(file_hash[:32])
-        with open(f"data/{file_uuid}", "wb") as f:
-            f.write(attachement_file)
+
+        with open(f"data/{file_uuid}.{mime_type.split('/')[-1]}", "wb") as f:
+            f.write(attachment_file)
+
+        # Open the image and create a thumbnail
+        image = Image.open(io.BytesIO(attachment_file))
+        image.thumbnail((128, 128))  # Resize the image so that the largest dimension is 128 pixels
+
+        # Convert the image to RGB mode if it's not
+        if image.mode in ("RGBA", "P"):
+            image = image.convert("RGB")
+
+        # Save the thumbnail
+        thumbnail_path = f"data/{file_uuid}_thumbnail.jpg"
+        image.save(thumbnail_path, "JPEG")
+
         async with async_session_maker() as session:
             try:
                 # create a new Attachment instance
-                new_attachment = Attachment(user_id=user.id, desc=desc, id=file_uuid)
+                new_attachment = Attachment(mime_type=mime_type, user_id=user.id, desc=desc, id=file_uuid)
                 print(new_attachment)
 
                 # add the new attachment to the session
@@ -243,13 +305,42 @@ async def upload_attachment(fileAttach: List[UploadFile] = File(...), desc: str 
         uuids.append(file_uuid)
     return {"message": "Attachment uploaded successfully", "uuids": uuids}
 
+@app.get("/attachments/data/{attachment_id_with_suffix}")
+async def get_attachment(attachment_id_with_suffix: str, user: User = Depends(current_active_user)):
+    thumbnail = False
+    if attachment_id_with_suffix.endswith("_thumbnail.jpg"):
+        attachment_id = attachment_id_with_suffix[:-len("_thumbnail.jpg")]
+        thumbnail = True
+    else:
+        attachment_id = attachment_id_with_suffix
+    try:
+        attachment_id = uuid.UUID(attachment_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid attachment id")
+    async with async_session_maker() as session:
+        result = await session.execute(select(Attachment).where(Attachment.id == attachment_id))
+        attachment = result.scalars().first()
+        if attachment is None:
+            raise HTTPException(status_code=404, detail="Attachment not found")
+        if attachment.user_id != user.id:
+            raise HTTPException(status_code=403, detail="User does not have access to this attachment")
+        filename = f"data/{attachment_id}_thumbnail.jpg" if thumbnail else f"data/{attachment_id}.{attachment.mime_type.split('/')[-1]}"
+        media_type = "image/jpeg" if thumbnail else attachment.mime_type
+        return FileResponse(filename, media_type=media_type)
+
 @app.get("/authenticated-route")
 async def authenticated_route(user: User = Depends(current_active_user)):
     return {"message": f"Hello {user.email}!"}
 
+@app.get("/favicon.ico")
+def favicon():
+    return Response(status_code=204)
+
 @app.get("/login")
-async def root(request: Request):
-    return templates.TemplateResponse("login.html", {"request": request})
+async def login(request: Request, current_user: User = Depends(current_active_user_optional)):
+    if current_user is None:
+        return templates.TemplateResponse("login.html", {"request": request})
+    return RedirectResponse(url="/", status_code=303)
 
 @app.get("/")
 async def root(request: Request, current_user: User = Depends(current_active_user_optional)):

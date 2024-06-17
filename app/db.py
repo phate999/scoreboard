@@ -6,10 +6,10 @@ from fastapi_users.models import ID
 from fastapi_users.db import SQLAlchemyBaseUserTableUUID, SQLAlchemyUserDatabase
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, relationship
-from sqlalchemy import Boolean, Column, ForeignKey, Integer, String, UUID, JSON
+from sqlalchemy import Boolean, Column, ForeignKey, Integer, String, UUID, JSON, DateTime
+from datetime import datetime, UTC
 
 from pydantic import BaseModel, Json
-
 
 DATABASE_URL = "sqlite+aiosqlite:///./test.db"
 
@@ -63,7 +63,8 @@ class Submission(Base):
     application_id = Column(Integer, ForeignKey("applications.id"))
     user_id = Column(UUID, ForeignKey("user.id"))
     submission = Column(String, nullable=True)
-    attachements = Column(JSON, nullable=True)
+    attachments = Column(JSON, nullable=True)
+    created_at  = Column(DateTime, default=datetime.utcnow)
 
     user = relationship("User", back_populates="submissions")
     applications = relationship("Applications", back_populates="submissions")
@@ -71,20 +72,18 @@ class Submission(Base):
 class SubmissionCreate(BaseModel):
     application_id: int
     submission: str
-    attachements: Json
+    attachments: Json
 
 class Attachment(Base):
     __tablename__ = "attachments"
 
     id = Column(UUID, primary_key=True, index=True)
+    mime_type = Column(String, nullable=False)
     user_id = Column(UUID, ForeignKey("user.id"))
     desc = Column(String, nullable=False)
 
     user = relationship("User", back_populates="attachments")
 
-class AttachmentCreate(BaseModel):
-    user_id: uuid.UUID
-    desc: str
 
 engine = create_async_engine(DATABASE_URL)
 async_session_maker = async_sessionmaker(engine, expire_on_commit=False)

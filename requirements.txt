@@ -2,3 +2,5 @@ jinja2
 fastapi
 fastapi-users[sqlalchemy]
 aiosqlite
+python-magic
+pillow
