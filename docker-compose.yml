@@ -12,6 +12,7 @@ services:
   scoreboard:
     image: dapplegate/scoreboard
     build: ./
+    hostname: ${HOSTNAME}
     labels:
       caddy: ${HOSTNAME}
       caddy.reverse_proxy: "{{ upstreams 8000 }}"
