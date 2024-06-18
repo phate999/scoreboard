@@ -12,4 +12,4 @@ RUN pip3 install -r requirements.txt
 RUN mkdir -p /app
 WORKDIR /app
 
-CMD ["fastapi", "dev"]
+CMD ["fastapi", "dev", "--host=0.0.0.0"]
