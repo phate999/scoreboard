@@ -4,3 +4,4 @@ fastapi-users[sqlalchemy]
 aiosqlite
 python-magic
 pillow
+python3-saml

@@ -101,3 +101,7 @@ async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
 
 async def get_user_db(session: AsyncSession = Depends(get_async_session)):
     yield SQLAlchemyUserDatabase(session, User) 
+
+async def get_user_db_manual():
+    async with async_session_maker() as session:
+        yield SQLAlchemyUserDatabase(session, User)

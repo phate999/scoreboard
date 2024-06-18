@@ -1,6 +1,6 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request, Depends, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI, Request, Depends, HTTPException, UploadFile, Form
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, RedirectResponse, Response
@@ -26,9 +26,11 @@ from schemas import UserCreate, UserRead, UserUpdate
 import uuid
 import hashlib
 from users import cookie_auth_backend, api_auth_backend, current_active_user, current_active_user_optional, fastapi_users
+from saml import router as saml_router
 
 from PIL import Image
 import io
+import os
 
 MAX_UPLOAD_SIZE = 1024 * 1024 * 4 # 4MB
 
@@ -70,6 +72,8 @@ app.include_router(
     prefix="/users",
     tags=["users"],
 )
+
+app.include_router(saml_router)
 
 #api to create a new application
 @app.post("/applications")
@@ -114,7 +118,6 @@ async def update_application(application_id: int, application_update: Applicatio
 
         if application is None:
             raise HTTPException(status_code=404, detail="Application not found")
-        print(application_update)
         # update the application attributes
         application.name = application_update.name
         application.is_active = application_update.is_active
@@ -164,7 +167,7 @@ async def get_applications(user: User = Depends(current_active_user)):
 async def assign_application(application_assignment: ApplicationAssignmentCreate, user: User = Depends(current_active_user)):
     if not user.is_superuser:
         raise HTTPException(status_code=403, detail="User is not superuser")
-    print(application_assignment, application_assignment.user_id, application_assignment.application_id)
+
     async with async_session_maker() as session:
         try:
             # create a new ApplicationAssignment instance
@@ -181,7 +184,6 @@ async def assign_application(application_assignment: ApplicationAssignmentCreate
 
             return {"message": "Application assigned successfully", "user_id": new_assignment.user_id, "application_id": new_assignment.application_id}
         except Exception as e:
-            print(e)
             await session.rollback()
             raise HTTPException(status_code=400, detail="Could not assign application") from e
         finally:
@@ -189,7 +191,6 @@ async def assign_application(application_assignment: ApplicationAssignmentCreate
 
 @app.post("/application_submission")
 async def application_submission(submission: SubmissionCreate, user: User = Depends(current_active_user)):
-    print(submission)
     async with async_session_maker() as session:
         try:
             # create a new Submission instance
@@ -206,7 +207,6 @@ async def application_submission(submission: SubmissionCreate, user: User = Depe
 
             return {"message": "Submission created successfully", "submission_id": new_submission.id}
         except Exception as e:
-            print("error", e)
             await session.rollback()
             raise HTTPException(status_code=400, detail="Could not create submission") from e
         finally:
@@ -243,13 +243,6 @@ async def delete_application_submission(submission_id: int, user: User = Depends
 
 @app.post("/upload_attachment")
 async def upload_attachment(fileAttach: List[UploadFile] = Form(...), desc: str = Form(...), user: User = Depends(current_active_user)):
-    # form = await request.form()
-    # fetch the attachments from the form
-    # attachments = form["fileAttach"]
-    print("fileattach", fileAttach)
-    
-    # desc = form.get("desc")
-    print("desc", desc) # todo try to pass this in as an argument
     uuids = []
     for attachment in fileAttach:
         if attachment.filename == "":
@@ -286,7 +279,6 @@ async def upload_attachment(fileAttach: List[UploadFile] = Form(...), desc: str 
             try:
                 # create a new Attachment instance
                 new_attachment = Attachment(mime_type=mime_type, user_id=user.id, desc=desc, id=file_uuid)
-                print(new_attachment)
 
                 # add the new attachment to the session
                 session.add(new_attachment)
@@ -297,7 +289,6 @@ async def upload_attachment(fileAttach: List[UploadFile] = Form(...), desc: str 
                 # refresh the instance in case any attributes have been modified on the server side
                 await session.refresh(new_attachment)
             except Exception as e:
-                print(e)
                 await session.rollback()
                 raise HTTPException(status_code=400, detail="Could not create attachment") from e
             finally:
@@ -328,18 +319,11 @@ async def get_attachment(attachment_id_with_suffix: str, user: User = Depends(cu
         media_type = "image/jpeg" if thumbnail else attachment.mime_type
         return FileResponse(filename, media_type=media_type)
 
-@app.get("/authenticated-route")
-async def authenticated_route(user: User = Depends(current_active_user)):
-    return {"message": f"Hello {user.email}!"}
-
-@app.get("/favicon.ico")
-def favicon():
-    return Response(status_code=204)
-
 @app.get("/login")
 async def login(request: Request, current_user: User = Depends(current_active_user_optional)):
     if current_user is None:
-        return templates.TemplateResponse("login.html", {"request": request})
+        showpoint_sso = os.environ.get("SHOWPOINT_SSO_URL")
+        return templates.TemplateResponse("login.html", {"request": request, "showpoint_sso": showpoint_sso})
     return RedirectResponse(url="/", status_code=303)
 
 @app.get("/")
@@ -347,3 +331,7 @@ async def root(request: Request, current_user: User = Depends(current_active_use
     if current_user is None:
         return templates.TemplateResponse("needs_login.html", {"request": request})
     return templates.TemplateResponse("index.html", {"request": request, "username": current_user.email})
+
+@app.get("/favicon.ico")
+def favicon():
+    return Response(status_code=204)
