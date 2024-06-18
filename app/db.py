@@ -11,7 +11,7 @@ from datetime import datetime, UTC
 
 from pydantic import BaseModel, Json
 
-DATABASE_URL = "sqlite+aiosqlite:///./test.db"
+DATABASE_URL = "sqlite+aiosqlite:///./data/test.db"
 
 
 class Base(DeclarativeBase):
