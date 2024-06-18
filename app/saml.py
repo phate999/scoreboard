@@ -12,7 +12,7 @@ router = APIRouter(
 )
 
 saml_certificate = os.environ.get("SAML_CERTIFICATE")
-saml_hostname = os.environ.get("SAML_HOSTNAME")
+saml_hostname = os.environ.get("HOSTNAME")
 saml_aws_app = os.environ.get("SAML_AWS_APP")
 saml_settings = {
     "strict": True, 
