@@ -9,4 +9,7 @@ WORKDIR /root
 COPY requirements.txt /root/requirements.txt
 RUN pip3 install -r requirements.txt
 
-CMD ["tail", "-f", "/dev/null"]
+RUN mkdir -p /app
+WORKDIR /app
+
+CMD ["fastapi", "dev"]
